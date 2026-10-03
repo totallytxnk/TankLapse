@@ -121,9 +121,4 @@ Pull requests are very welcome!
 
 ## License
 
-MIT – see [LICENSE](LICENSE).
-
----
-
-Made for long sessions and peace of mind.  
-Happy timelapsing! 🎬
+TankLapse is licensed under the MIT License. See [LICENSE](LICENSE) for details.

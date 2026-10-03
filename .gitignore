@@ -44,3 +44,7 @@ captures/
 output/
 *.log
 settings.json
+
+# PyInstaller
+*.spec
+*.exe
