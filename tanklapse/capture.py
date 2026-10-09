@@ -7,10 +7,8 @@ No frames are kept in RAM, enabling truly infinite-duration recordings.
 
 from __future__ import annotations
 
-import os
 import time
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -59,6 +57,13 @@ class CaptureEngine:
             return 0.0
         return time.time() - self._start_time
 
+    @property
+    def file_extension(self) -> str:
+        """Extension actually used on disk (.jpg not .jpeg)."""
+        if self.image_format == "JPEG":
+            return "jpg"
+        return self.image_format.lower()
+
     def start(self) -> None:
         if self._running:
             return
@@ -83,25 +88,31 @@ class CaptureEngine:
     def _capture_loop(self) -> None:
         try:
             with mss.mss() as sct:
-                # monitors[0] is the virtual "all monitors" screen
-                # monitors[1+] are individual monitors
-                mon = sct.monitors[self.monitor] if self.monitor < len(sct.monitors) else sct.monitors[1]
+                mon = (
+                    sct.monitors[self.monitor]
+                    if self.monitor < len(sct.monitors)
+                    else sct.monitors[1]
+                )
+                ext = self.file_extension
 
                 while not self._stop_event.is_set():
                     loop_start = time.perf_counter()
 
                     try:
+                        # Ensure directory still exists (user may have deleted it)
+                        self.output_dir.mkdir(parents=True, exist_ok=True)
+
                         sct_img = sct.grab(mon)
                         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
-                        # Sequential zero-padded filename for reliable ffmpeg ordering
-                        filename = f"frame_{self._frame_count:08d}.{self.image_format.lower()}"
+                        filename = f"frame_{self._frame_count:08d}.{ext}"
                         filepath = self.output_dir / filename
 
                         if self.image_format == "JPEG":
                             img.save(filepath, "JPEG", quality=self.jpeg_quality, optimize=True)
                         else:
-                            img.save(filepath, "PNG", optimize=True)
+                            # PNG: skip optimize on large frames (much faster, same size-ish)
+                            img.save(filepath, "PNG")
 
                         self._frame_count += 1
 
@@ -111,16 +122,17 @@ class CaptureEngine:
                     except Exception as exc:
                         if self.on_error:
                             self.on_error(exc)
-                        # Continue capturing even after a single-frame error
 
-                    # Precise interval accounting for capture + save time
+                    # Precise interval — never pass a negative sleep
                     elapsed = time.perf_counter() - loop_start
                     sleep_time = self.interval - elapsed
-                    if sleep_time > 0:
-                        # Wait in small chunks so we can react quickly to stop
+                    if sleep_time > 0.001:
                         end_wait = time.perf_counter() + sleep_time
-                        while time.perf_counter() < end_wait and not self._stop_event.is_set():
-                            time.sleep(min(0.05, end_wait - time.perf_counter()))
+                        while not self._stop_event.is_set():
+                            remaining = end_wait - time.perf_counter()
+                            if remaining <= 0:
+                                break
+                            time.sleep(min(0.05, remaining))
 
         except Exception as exc:
             if self.on_error:
@@ -132,7 +144,6 @@ class CaptureEngine:
     def list_monitors() -> list[dict]:
         """Return a list of available monitors for UI selection."""
         with mss.mss() as sct:
-            # Skip index 0 (combined virtual desktop)
             return [
                 {
                     "index": i,

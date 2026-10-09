@@ -51,7 +51,10 @@ class TankLapseApp(tk.Tk):
         self._refresh_monitors()
         self._update_ffmpeg_status()
 
-        default_dir = Path.cwd() / "tanklapse_captures"
+        # Prefer a writable user folder (cwd can be System32 when launched from Explorer)
+        videos = Path.home() / "Videos" / "TankLapse"
+        docs = Path.home() / "Documents" / "TankLapse"
+        default_dir = videos if (Path.home() / "Videos").exists() else docs
         self._set_output(str(default_dir))
 
     # ------------------------------------------------------------------ UI

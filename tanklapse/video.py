@@ -17,6 +17,15 @@ def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def _detect_extension(frames_dir: Path) -> str:
+    """Look at actual files on disk to find the frame extension."""
+    for ext in ("jpg", "jpeg", "png"):
+        matches = list(frames_dir.glob(f"frame_*.{ext}"))
+        if matches:
+            return ext
+    return "jpg"  # fallback
+
+
 def stitch_frames(
     frames_dir: Path,
     output_path: Path,
@@ -29,7 +38,8 @@ def stitch_frames(
     """
     Stitch sequential frames into an MP4 using FFmpeg.
 
-    Frames are expected to be named frame_00000000.jpg, frame_00000001.jpg, ...
+    Frames are expected to be named frame_00000000.jpg / .png / .jpeg
+    Extension is auto-detected from files on disk when possible.
     """
     if not check_ffmpeg():
         raise RuntimeError(
@@ -42,24 +52,32 @@ def stitch_frames(
     frames_dir = Path(frames_dir)
     output_path = Path(output_path)
 
-    # Detect actual extension used
-    ext = image_format.lower()
+    # Prefer what is actually on disk over the UI setting
+    ext = _detect_extension(frames_dir)
+    # Normalise jpeg → jpg for the pattern (FFmpeg is fine with either,
+    # but our saver always writes .jpg for JPEG)
     if ext == "jpeg":
         ext = "jpg"
 
     pattern = str(frames_dir / f"frame_%08d.{ext}")
 
-    # Prefer libx264 for maximum compatibility
+    # If files were saved as .jpeg (old bug), try that pattern too
+    if not list(frames_dir.glob(f"frame_*.{ext}")):
+        jpeg_files = list(frames_dir.glob("frame_*.jpeg"))
+        if jpeg_files:
+            ext = "jpeg"
+            pattern = str(frames_dir / f"frame_%08d.{ext}")
+
     cmd = [
         "ffmpeg",
-        "-y",                          # overwrite
+        "-y",
         "-framerate", str(fps),
         "-i", pattern,
         "-c:v", "libx264",
         "-preset", preset,
         "-crf", str(crf),
-        "-pix_fmt", "yuv420p",         # compatibility
-        "-movflags", "+faststart",     # web-friendly
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         str(output_path),
     ]
 
@@ -74,7 +92,6 @@ def stitch_frames(
         universal_newlines=True,
     )
 
-    # Stream output for progress feedback
     if process.stdout:
         for line in process.stdout:
             line = line.strip()
